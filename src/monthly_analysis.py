@@ -116,8 +116,58 @@ def _fetch_market_indexes(config: AppConfig, errors: list[str]) -> list[MarketIn
             history = _fetch_index_history(code, max(config.monthly.lookback_days + 90, 120))
             indexes.append(_analyze_index(code, history, config.monthly.lookback_days))
         except Exception as exc:
-            errors.append(f"{_index_name(code)}（{code}）指数采集失败：{exc}")
+            try:
+                indexes.append(_fetch_index_spot_fallback(code))
+                errors.append(f"{_index_name(code)}（{code}）历史趋势失败，已使用实时指数兜底：{exc}")
+            except Exception as fallback_exc:
+                errors.append(f"{_index_name(code)}（{code}）指数采集失败：{exc}；实时兜底失败：{fallback_exc}")
     return indexes
+
+
+def _fetch_index_spot_fallback(code: str) -> MarketIndex:
+    df = ak.stock_zh_index_spot_em()
+    if df is None or df.empty:
+        raise ValueError("指数实时行情为空")
+
+    target = code[-6:]
+    row = None
+    for item in df.fillna("").to_dict("records"):
+        item_code = str(item.get("代码", item.get("code", ""))).zfill(6)
+        item_name = str(item.get("名称", item.get("name", ""))).strip()
+        if item_code == target or item_name == _index_name(code):
+            row = item
+            break
+    if row is None:
+        raise ValueError(f"指数实时行情未找到 {code}")
+
+    close = _to_float(row.get("最新价", row.get("close", 0)))
+    pct_change = _to_float(row.get("涨跌幅", row.get("pct_change", 0)))
+    volume = _to_float(row.get("成交量", row.get("volume", 0)))
+    score, state, reason = _score_spot_index(pct_change)
+    return MarketIndex(
+        code=code,
+        name=_index_name(code),
+        score=score,
+        close=close,
+        pct_change=pct_change,
+        month_return=0,
+        ma20_gap=0,
+        ma60_gap=0,
+        volume_ratio=0 if volume <= 0 else 1,
+        state=state,
+        reason=reason,
+    )
+
+
+def _score_spot_index(pct_change: float) -> tuple[float, str, str]:
+    score = round(_clamp(50 + pct_change * 8, 0, 100), 1)
+    if pct_change >= 1:
+        return score, "当日偏强", "实时指数上涨"
+    if pct_change >= 0:
+        return score, "当日震荡偏强", "实时指数小幅上涨"
+    if pct_change > -1:
+        return score, "当日震荡偏弱", "实时指数小幅下跌"
+    return score, "当日偏弱", "实时指数下跌"
 
 
 def _fetch_index_history(code: str, days: int) -> pd.DataFrame:

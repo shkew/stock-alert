@@ -9,7 +9,7 @@ import akshare as ak
 from .config import AppConfig, Stock
 from .data_sources import fetch_stock_news
 from .monthly_analysis import _fetch_market_indexes, _market_environment
-from .overseas_source import fetch_yahoo_news
+from .overseas_source import fetch_yahoo_history, fetch_yahoo_news
 
 
 @dataclass(frozen=True)
@@ -195,7 +195,7 @@ def render_morning_brief(title: str, events: list[Event], errors: list[str], con
     lines = [title, f"生成：{datetime.now():%m-%d %H:%M}", ""]
     themes = _theme_counts(events)
 
-    lines.append(f"外围：{_overseas_one_liner(events, themes)}")
+    lines.append(f"外围：{_overseas_market_move_line()}；{_overseas_one_liner(events, themes)}")
     lines.append(f"A股新闻：{_a_share_news_one_liner(events)}")
     lines.append("")
     lines.append("A股潜力方向：")
@@ -562,7 +562,8 @@ def _morning_a_share_lines(config: AppConfig, events: list[Event], themes: dict[
         strongest = max(indexes, key=lambda item: item.score)
         lines.append(f"- 大盘：{market_state}，分{market_score:.0f}；相对强的是{strongest.name}。")
     else:
-        lines.append(f"- 大盘：{market_state}，分{market_score:.0f}。")
+        inferred_score, inferred_state = _infer_market_from_boards(boards)
+        lines.append(f"- 大盘：指数接口暂不可用，按板块热度推断为{inferred_state}，分{inferred_score:.0f}。")
 
     top_boards = boards[:3]
     if top_boards:
@@ -621,6 +622,35 @@ def _overseas_one_liner(events: list[Event], themes: dict[str, int]) -> str:
         parts.append(f"利率/风险{themes['监管风险']}条")
     label = "、".join(parts) if parts else f"{len(overseas_events)}条"
     return f"{label}，只作为A股情绪参考。"
+
+
+def _overseas_market_move_line() -> str:
+    assets = [
+        ("黄金", ["GC=F", "GLD"]),
+        ("纳指", ["^IXIC", "QQQ"]),
+        ("费半", ["^SOX", "SOXX"]),
+    ]
+    parts: list[str] = []
+    for name, symbols in assets:
+        pct_change = _first_overseas_pct(symbols)
+        parts.append(f"{name}{_signed_pct(pct_change)}" if pct_change is not None else f"{name}暂无")
+    return "、".join(parts)
+
+
+def _first_overseas_pct(symbols: list[str]) -> float | None:
+    for symbol in symbols:
+        try:
+            history = fetch_yahoo_history(symbol, 10)
+            latest = history.iloc[-1]
+            return float(latest.get("pct_change", 0))
+        except Exception:
+            continue
+    return None
+
+
+def _signed_pct(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
 
 
 def _a_share_news_one_liner(events: list[Event]) -> str:
@@ -718,6 +748,22 @@ def _quick_board_reason(pct_change: float, amount: float) -> str:
     if amount >= 20_000_000_000:
         reasons.append("成交额活跃")
     return "；".join(reasons) if reasons else "热度一般"
+
+
+def _infer_market_from_boards(boards: list[QuickBoard]) -> tuple[float, str]:
+    if not boards:
+        return 50.0, "中性"
+    top = boards[:5]
+    avg_score = sum(board.score for board in top) / len(top)
+    avg_change = sum(board.pct_change for board in top) / len(top)
+    score = round(max(0, min(100, avg_score - 12)), 1)
+    if avg_change >= 2.5 and avg_score >= 75:
+        return score, "局部偏强"
+    if avg_change >= 1:
+        return score, "结构性活跃"
+    if avg_change > 0:
+        return score, "弱修复"
+    return score, "偏弱"
 
 
 def _board_bias(score: float) -> str:

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from io import StringIO
 from urllib.parse import quote
 import time
 import xml.etree.ElementTree as ET
@@ -68,14 +69,24 @@ def fetch_yahoo_history(symbol: str, days: int) -> pd.DataFrame:
     end = int(time.time())
     start = int((datetime.now() - timedelta(days=days)).timestamp())
     encoded = quote(symbol, safe="")
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}"
-    response = requests.get(
-        url,
-        params={"period1": start, "period2": end, "interval": "1d", "events": "history"},
-        timeout=20,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    response.raise_for_status()
+    params = {"period1": start, "period2": end, "interval": "1d", "events": "history"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    errors: list[str] = []
+    response = None
+    for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+        url = f"https://{host}/v8/finance/chart/{encoded}"
+        try:
+            response = requests.get(url, params=params, timeout=20, headers=headers)
+            response.raise_for_status()
+            break
+        except Exception as exc:
+            errors.append(str(exc))
+            response = None
+    if response is None:
+        stooq = _fetch_stooq_history(symbol, days)
+        if stooq is not None:
+            return stooq
+        raise RuntimeError("Yahoo Finance 行情接口失败；" + " | ".join(errors[-2:]))
     payload = response.json()
     result = payload["chart"]["result"][0]
     timestamps = result.get("timestamp") or []
@@ -103,6 +114,64 @@ def fetch_yahoo_history(symbol: str, days: int) -> pd.DataFrame:
     )
     df["pct_change"] = df["close"].pct_change() * 100
     return df.sort_values("date").reset_index(drop=True)
+
+
+def _fetch_stooq_history(symbol: str, days: int) -> pd.DataFrame | None:
+    stooq_symbol = _stooq_symbol(symbol)
+    if not stooq_symbol:
+        return None
+    url = "https://stooq.com/q/d/l/"
+    try:
+        response = requests.get(
+            url,
+            params={"s": stooq_symbol, "i": "d"},
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        df = pd.read_csv(StringIO(response.text))
+    except Exception:
+        return None
+    if df is None or df.empty or "Date" not in df.columns:
+        return None
+
+    start = datetime.now() - timedelta(days=days)
+    clean = df.rename(
+        columns={
+            "Date": "date",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    )
+    clean["date"] = pd.to_datetime(clean["date"], errors="coerce")
+    clean = clean.dropna(subset=["date", "open", "high", "low", "close"])
+    clean = clean[clean["date"] >= start].copy()
+    if clean.empty:
+        return None
+    clean[["open", "high", "low", "close", "volume"]] = clean[["open", "high", "low", "close", "volume"]].apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    clean["pct_change"] = clean["close"].pct_change() * 100
+    return clean.sort_values("date").reset_index(drop=True)
+
+
+def _stooq_symbol(symbol: str) -> str:
+    mapping = {
+        "GLD": "gld.us",
+        "QQQ": "qqq.us",
+        "SOXX": "soxx.us",
+        "AAPL": "aapl.us",
+        "NVDA": "nvda.us",
+        "TSLA": "tsla.us",
+        "^GSPC": "^spx",
+        "^IXIC": "^ndq",
+        "^DJI": "^dji",
+    }
+    return mapping.get(symbol, "")
 
 
 def fetch_yahoo_news(symbol: str, limit: int) -> list[dict[str, str]]:
