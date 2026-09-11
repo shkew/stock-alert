@@ -1,0 +1,176 @@
+report:
+  title: "股票信息日报"
+  history_days: 180
+  news_limit: 5
+  output_dir: "reports"
+
+monitor:
+  enabled: true
+  lookback_days: 14
+  state_dir: "state"
+  max_events_per_stock: 8
+  push_when_empty: false
+  important_keywords:
+    - "重大"
+    - "业绩"
+    - "预告"
+    - "快报"
+    - "年报"
+    - "中报"
+    - "半年报"
+    - "季报"
+    - "分红"
+    - "派息"
+    - "回购"
+    - "增持"
+    - "减持"
+    - "重组"
+    - "并购"
+    - "收购"
+    - "定增"
+    - "解禁"
+    - "停牌"
+    - "复牌"
+    - "诉讼"
+    - "处罚"
+    - "监管"
+    - "中标"
+    - "合同"
+    - "earnings"
+    - "guidance"
+    - "revenue"
+    - "profit"
+    - "dividend"
+    - "buyback"
+    - "merger"
+    - "acquisition"
+    - "chip"
+    - "semiconductor"
+    - "tariff"
+    - "Fed"
+    - "rate"
+    - "Korea"
+    - "AI"
+
+risk:
+  enabled: true
+  state_dir: "state"
+  lookback_days: 90
+  loss_warn_pct: -5
+  loss_danger_pct: -10
+  single_day_drop_pct: -4
+  volume_ratio_threshold: 1.8
+  push_when_empty: false
+
+volume_monitor:
+  enabled: true
+  source: "ths"
+  eastmoney_fallback: false
+  state_dir: "state"
+  lookback_days: 40
+  avg_volume_days: 20
+  high_volume_ratio: 1.8
+  low_volume_ratio: 0.55
+  price_move_pct: 2.0
+  min_progress: 0.15
+  push_when_empty: false
+
+monthly:
+  enabled: true
+  lookback_days: 22
+  top_n: 10
+  min_score: 60
+  board_types: ["industry", "concept"]
+  top_board_n: 8
+  stocks_per_board: 5
+  max_boards_to_scan: 16
+  min_amount: 100000000
+  require_revenue_growth: true
+  allow_unknown_revenue: false
+  min_revenue_growth_pct: 0
+  indexes: ["000001", "399001", "000688"]
+
+data_sources:
+  eastmoney_news: true
+  ths: true
+  compass:
+    enabled: true
+    mode: "auto"
+    api_base_url: ""
+    api_endpoint_template: ""
+    api_timeout: 15
+    export_dir: "data/compass"
+    file_pattern: "{code}.*"
+    max_rows: 8
+
+overseas:
+  enabled: true
+  history_days: 90
+  news_limit: 5
+  indexes:
+    - symbol: "^GSPC"
+      name: "标普500"
+      market: "US"
+    - symbol: "^IXIC"
+      name: "纳斯达克"
+      market: "US"
+    - symbol: "^DJI"
+      name: "道琼斯"
+      market: "US"
+    - symbol: "^SOX"
+      name: "费城半导体指数"
+      market: "US"
+    - symbol: "^KS11"
+      name: "韩国KOSPI"
+      market: "KR"
+    - symbol: "^KQ11"
+      name: "韩国KOSDAQ"
+      market: "KR"
+  watchlist:
+    - symbol: "NVDA"
+      name: "英伟达"
+      market: "US"
+      themes: ["AI算力", "半导体"]
+    - symbol: "AAPL"
+      name: "苹果"
+      market: "US"
+      themes: ["消费电子", "苹果产业链"]
+    - symbol: "TSLA"
+      name: "特斯拉"
+      market: "US"
+      themes: ["新能源车", "机器人"]
+    - symbol: "005930.KS"
+      name: "三星电子"
+      market: "KR"
+      themes: ["存储芯片", "消费电子"]
+    - symbol: "000660.KS"
+      name: "SK海力士"
+      market: "KR"
+      themes: ["HBM", "存储芯片"]
+    - symbol: "373220.KS"
+      name: "LG新能源"
+      market: "KR"
+      themes: ["动力电池", "新能源"]
+
+signals:
+  volume_ratio_threshold: 1.8
+  rsi_overbought: 70
+  rsi_oversold: 30
+
+watchlist:
+  - code: "000001"
+    name: "平安银行"
+    sectors: ["银行"]
+    themes: ["跨境支付(CIPS)", "金融科技"]
+  - code: "600519"
+    name: "贵州茅台"
+    sectors: ["食品饮料", "白酒"]
+    themes: ["高股息", "消费"]
+
+positions:
+  - code: "000001"
+    name: "平安银行"
+    cost_price:
+    quantity:
+    stop_loss_price:
+    note: "示例：填入真实成本价后启用账户风险监控"
