@@ -1,0 +1,3 @@
+Settings -> Secrets and variables -> Actions -> New repository secret
+Name: BARK_ENDPOINT
+Value: https://api.day.app/EWYCfL7NagFayZGwKNaxEo/这里改成你自己的推送内容
