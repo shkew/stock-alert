@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from .config import load_config
-from .event_monitor import run_event_monitor
+from .event_monitor import run_event_monitor, run_morning_brief
 from .report import build_report
 from .push import push_markdown
 from .risk_monitor import run_risk_monitor
@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--monthly", action="store_true", help="Generate full-market board scan and stock candidate report.")
     parser.add_argument("--market-scan", action="store_true", help="Alias for --monthly.")
     parser.add_argument("--monitor", action="store_true", help="Push only new important news, announcements, and financial-report events.")
+    parser.add_argument("--morning", action="store_true", help="Push a concise 9am A-share focused morning brief.")
     parser.add_argument("--risk-monitor", action="store_true", help="Push account-position risk alerts.")
     parser.add_argument("--volume-monitor", action="store_true", help="Push intraday abnormal volume alerts.")
     parser.add_argument("--no-state", action="store_true", help="Do not update incremental monitor state.")
@@ -31,6 +32,13 @@ def main() -> None:
 
         markdown = save_monthly_report(config)
         print(markdown)
+        return
+
+    if args.morning:
+        result = run_morning_brief(config)
+        print(result.markdown)
+        if not args.dry_run:
+            push_markdown(result.title, result.brief)
         return
 
     if args.monitor:

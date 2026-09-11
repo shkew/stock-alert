@@ -6,21 +6,23 @@ on:
       mode:
         description: "Run mode"
         required: true
-        default: "monitor"
+        default: "morning"
         type: choice
         options:
+          - morning
           - monitor
           - volume
           - daily
           - monthly
   schedule:
-    - cron: "5,35 1-7 * * 1-5"
-    - cron: "15,45 2-6 * * 1-5"
-    - cron: "25 7 * * 1-5"
-    - cron: "30 12 * * 1-5"
+    - cron: "0 1 * * 1-5"
 
 permissions:
   contents: read
+
+concurrency:
+  group: stock-auto-update
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -29,7 +31,13 @@ jobs:
 
     env:
       BARK_ENDPOINT: ${{ secrets.BARK_ENDPOINT }}
-      PUSH_CHANNELS: bark
+      BARK_KEY: ${{ secrets.BARK_KEY }}
+      BARK_SERVER: ${{ vars.BARK_SERVER || 'https://api.day.app' }}
+      BARK_GROUP: ${{ vars.BARK_GROUP || '股票提醒' }}
+      BARK_LEVEL: ${{ vars.BARK_LEVEL }}
+      BARK_SOUND: ${{ vars.BARK_SOUND }}
+      BARK_URL: ${{ vars.BARK_URL }}
+      PUSH_CHANNELS: ${{ vars.PUSH_CHANNELS || 'bark' }}
       PYTHONIOENCODING: utf-8
       TZ: Asia/Shanghai
 
@@ -41,22 +49,52 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+
+      - name: Restore incremental monitor state
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: event-state-${{ github.run_id }}
+          restore-keys: |
+            event-state-
 
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run monitor
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'monitor' }}
-        run: python run.py --monitor
+      - name: Decide command
+        id: command
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            MODE="${{ inputs.mode }}"
+          else
+            MODE="morning"
+          fi
 
-      - name: Run volume monitor
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'volume' }}
-        run: python run.py --volume-monitor
+          case "$MODE" in
+            morning) echo "cmd=python run.py --morning" >> "$GITHUB_OUTPUT" ;;
+            monitor) echo "cmd=python run.py --monitor" >> "$GITHUB_OUTPUT" ;;
+            volume) echo "cmd=python run.py --volume-monitor" >> "$GITHUB_OUTPUT" ;;
+            daily) echo "cmd=python run.py" >> "$GITHUB_OUTPUT" ;;
+            monthly) echo "cmd=python run.py --monthly" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unknown mode: $MODE" >&2; exit 1 ;;
+          esac
 
-      - name: Run daily report
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'daily' }}
-        run: python run.py
+      - name: Run stock updater
+        run: ${{ steps.command.outputs.cmd }}
 
-      - name: Run monthly scan
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'monthly' }}
-        run: python run.py --monthly
+      - name: Save incremental monitor state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: event-state-${{ github.run_id }}
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-reports-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore

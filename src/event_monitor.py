@@ -77,6 +77,34 @@ def run_event_monitor(config: AppConfig, update_state: bool = True, ignore_state
     return MonitorResult(title=title, markdown=markdown, brief=brief, new_events=ranked_events, errors=errors)
 
 
+def run_morning_brief(config: AppConfig) -> MonitorResult:
+    now = datetime.now()
+    title = f"A股早盘简报 {now:%Y-%m-%d}"
+    events: list[Event] = []
+    errors: list[str] = []
+
+    for stock in config.watchlist:
+        stock_events, stock_errors = collect_stock_events(stock, config)
+        events.extend(stock_events[: config.monitor.max_events_per_stock])
+        errors.extend([f"{stock.name}（{stock.code}）：{error}" for error in stock_errors])
+
+    if config.overseas.enabled:
+        for asset in [*config.overseas.indexes, *config.overseas.watchlist]:
+            stock = Stock(code=asset.symbol, name=asset.name, sectors=[asset.market], themes=asset.themes)
+            try:
+                events.extend(_overseas_news_events(stock, config)[:2])
+            except Exception as exc:
+                errors.append(f"{asset.name}（{asset.symbol}）：外围新闻采集失败：{exc}")
+
+    ranked_events = sorted(_dedupe_events(events), key=_event_rank)
+    brief = render_morning_brief(title, ranked_events, errors, config)
+    markdown = render_monitor_result(title, ranked_events, errors, brief)
+    config.report.output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = config.report.output_dir / f"morning_brief_{now:%Y%m%d_%H%M%S}.md"
+    output_file.write_text(markdown, encoding="utf-8")
+    return MonitorResult(title=title, markdown=markdown, brief=brief, new_events=ranked_events, errors=errors)
+
+
 def collect_stock_events(stock: Stock, config: AppConfig) -> tuple[list[Event], list[str]]:
     events: list[Event] = []
     errors: list[str] = []
@@ -160,6 +188,22 @@ def render_monitor_brief(title: str, events: list[Event], errors: list[str], con
     if errors:
         lines.extend(["", f"数据源：{len(errors)} 个接口异常，完整记录见 reports。"])
     lines.append("完整原文和链接已保存到 reports。")
+    return "\n".join(lines)
+
+
+def render_morning_brief(title: str, events: list[Event], errors: list[str], config: AppConfig) -> str:
+    lines = [title, f"生成：{datetime.now():%m-%d %H:%M}", ""]
+    themes = _theme_counts(events)
+
+    lines.append(f"外围：{_overseas_one_liner(events, themes)}")
+    lines.append(f"A股新闻：{_a_share_news_one_liner(events)}")
+    lines.append("")
+    lines.append("A股潜力方向：")
+    lines.extend(_morning_a_share_lines(config, events, themes))
+
+    if errors:
+        lines.append(f"数据提示：{len(errors)} 个接口异常，详见 reports。")
+    lines.append("仅作信息跟踪，不构成买卖建议。")
     return "\n".join(lines)
 
 
@@ -478,7 +522,7 @@ def _a_share_opportunity_lines(config: AppConfig, events: list[Event], themes: d
         if board.leader_name:
             lines.append(
                 f"- {board.name}：{board.reason}；领涨观察："
-                f"{board.leader_name}(代码待确认) 涨{board.leader_pct_change:.2f}% 现价{board.leader_price:.2f}。"
+                f"{_leader_label(board)} 涨{board.leader_pct_change:.2f}% 现价{board.leader_price:.2f}。"
             )
         else:
             lines.append(f"- {board.name}：{board.reason}；暂无领涨股字段。")
@@ -486,7 +530,7 @@ def _a_share_opportunity_lines(config: AppConfig, events: list[Event], themes: d
     leaders = [board for board in boards if board.leader_name][:5]
     if leaders:
         leader_text = "；".join(
-            f"{board.leader_name}(代码待确认) {board.name} 涨{board.leader_pct_change:.2f}%"
+            f"{_leader_label(board)} {board.name} 涨{board.leader_pct_change:.2f}%"
             for board in leaders
         )
         lines.append(f"- 个股观察池：{leader_text}。")
@@ -501,6 +545,119 @@ def _a_share_opportunity_lines(config: AppConfig, events: list[Event], themes: d
     return lines[:9]
 
 
+def _morning_a_share_lines(config: AppConfig, events: list[Event], themes: dict[str, int]) -> list[str]:
+    errors: list[str] = []
+    try:
+        indexes = _fetch_market_indexes(config, errors)
+        market_score, market_state = _market_environment(indexes)
+        boards = _fetch_quick_ths_industry_boards()
+    except Exception as exc:
+        hints = _message_board_hints(events, themes)
+        if hints:
+            return [f"- 主线：{', '.join(hints[:3])}；板块接口暂不可用，先等放量和均线确认。", f"- 异常：{exc}"]
+        return [f"- 板块接口暂不可用：{exc}"]
+
+    lines: list[str] = []
+    if indexes:
+        strongest = max(indexes, key=lambda item: item.score)
+        lines.append(f"- 大盘：{market_state}，分{market_score:.0f}；相对强的是{strongest.name}。")
+    else:
+        lines.append(f"- 大盘：{market_state}，分{market_score:.0f}。")
+
+    top_boards = boards[:3]
+    if top_boards:
+        board_text = "；".join(f"{board.name} 涨{board.pct_change:.2f}% 分{board.score:.0f}" for board in top_boards)
+        lines.append(f"- 板块：{board_text}。")
+    else:
+        lines.append("- 板块：暂无明显强势板块。")
+
+    picks = _three_cross_board_picks(boards)
+    if picks:
+        lines.append("- 观察股：")
+        for board in picks:
+            lines.append(f"  {_leader_label(board)}：{board.name}，涨{board.leader_pct_change:.2f}%，现价{board.leader_price:.2f}。")
+    else:
+        lines.append("- 观察股：暂无可用领涨股。")
+
+    hints = _message_board_hints(events, themes)
+    if hints:
+        lines.append(f"- 新闻主线：{', '.join(hints[:3])}。")
+    if errors:
+        lines.append(f"- 数据：{len(errors)} 个指数接口异常。")
+    return lines[:7]
+
+
+def _three_cross_board_picks(boards: list["QuickBoard"]) -> list["QuickBoard"]:
+    picks: list[QuickBoard] = []
+    used_boards: set[str] = set()
+    used_names: set[str] = set()
+    for board in boards:
+        if not board.leader_name or board.name in used_boards or board.leader_name in used_names:
+            continue
+        picks.append(board)
+        used_boards.add(board.name)
+        used_names.add(board.leader_name)
+        if len(picks) >= 3:
+            break
+    return picks
+
+
+def _leader_label(board: "QuickBoard") -> str:
+    if board.leader_code:
+        return f"{board.leader_name}({board.leader_code})"
+    return f"{board.leader_name}(代码待确认)"
+
+
+def _overseas_one_liner(events: list[Event], themes: dict[str, int]) -> str:
+    overseas_events = [event for event in events if event.category == "外围消息"]
+    if not overseas_events:
+        return "暂无高权重外围扰动。"
+    parts = []
+    if themes.get("AI/半导体", 0):
+        parts.append(f"科技链{themes['AI/半导体']}条")
+    if themes.get("韩国链", 0):
+        parts.append(f"韩国链{themes['韩国链']}条")
+    if themes.get("监管风险", 0):
+        parts.append(f"利率/风险{themes['监管风险']}条")
+    label = "、".join(parts) if parts else f"{len(overseas_events)}条"
+    return f"{label}，只作为A股情绪参考。"
+
+
+def _a_share_news_one_liner(events: list[Event]) -> str:
+    a_events = [
+        event
+        for event in events
+        if event.category != "外围消息" and not event.stock.code.startswith("^") and _is_recent_event(event, days=3)
+    ]
+    if not a_events:
+        return "暂无近3日自选股高权重新闻，重点看板块资金。"
+    items = [f"{event.stock.name}:{_short_title(event.title, 24)}" for event in a_events[:2]]
+    return "；".join(items)
+
+
+def _is_recent_event(event: Event, days: int) -> bool:
+    parsed = _parse_event_datetime(event.date)
+    if parsed is None:
+        return False
+    return parsed >= datetime.now() - timedelta(days=days)
+
+
+def _parse_event_datetime(value: str) -> datetime | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%a, %d %b %Y %H:%M:%S %z"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.replace(tzinfo=None)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text[:19])
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class QuickBoard:
     name: str
@@ -508,6 +665,7 @@ class QuickBoard:
     pct_change: float
     amount: float
     leader_name: str
+    leader_code: str
     leader_price: float
     leader_pct_change: float
     reason: str
@@ -515,6 +673,7 @@ class QuickBoard:
 
 def _fetch_quick_ths_industry_boards() -> list[QuickBoard]:
     df = ak.stock_board_industry_summary_ths()
+    code_map = _stock_code_name_map()
     boards: list[QuickBoard] = []
     for row in _rows(df):
         name = _first(row, ["板块"])
@@ -523,6 +682,7 @@ def _fetch_quick_ths_industry_boards() -> list[QuickBoard]:
         pct_change = _number(row.get("涨跌幅"))
         amount = _number(row.get("总成交额")) * 100_000_000
         leader_name = _first(row, ["领涨股"])
+        leader_code = code_map.get(leader_name, "")
         leader_price = _number(row.get("领涨股-最新价"))
         leader_pct_change = _number(row.get("领涨股-涨跌幅"))
         score = _quick_board_score(pct_change, amount)
@@ -533,6 +693,7 @@ def _fetch_quick_ths_industry_boards() -> list[QuickBoard]:
                 pct_change=pct_change,
                 amount=amount,
                 leader_name=leader_name,
+                leader_code=leader_code,
                 leader_price=leader_price,
                 leader_pct_change=leader_pct_change,
                 reason=_quick_board_reason(pct_change, amount),
@@ -586,12 +747,26 @@ def _number(value) -> float:
     if value is None:
         return 0.0
     text = str(value).replace("%", "").replace(",", "").strip()
-    if not text or text in {"-", "--"}:
+    if not text or text in {"-", "--", "nan", "None"}:
         return 0.0
     try:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def _stock_code_name_map() -> dict[str, str]:
+    try:
+        df = ak.stock_info_a_code_name()
+    except Exception:
+        return {}
+    result: dict[str, str] = {}
+    for row in _rows(df):
+        code = _first(row, ["code", "证券代码", "股票代码", "代码"])
+        name = _first(row, ["name", "证券简称", "股票简称", "名称"])
+        if code and name:
+            result[name] = code.zfill(6)
+    return result
 
 
 def _message_board_hints(events: list[Event], themes: dict[str, int]) -> list[str]:

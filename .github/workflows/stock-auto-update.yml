@@ -9,13 +9,14 @@ on:
         default: "monitor"
         type: choice
         options:
+          - morning
           - monitor
           - volume
           - daily
           - monthly
   schedule:
-    # Asia/Shanghai 09:05-15:35, Monday-Friday, for important event monitoring.
-    - cron: "5,35 1-7 * * 1-5"
+    # Asia/Shanghai 09:00, Monday-Friday, for concise A-share morning brief.
+    - cron: "0 1 * * 1-5"
     # Asia/Shanghai 09:45-14:45, Monday-Friday, for intraday volume alerts.
     - cron: "15,45 2-6 * * 1-5"
     # Asia/Shanghai 15:25, Monday-Friday, for full daily report after A-share close.
@@ -76,6 +77,8 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             MODE="${{ inputs.mode }}"
+          elif [[ "${{ github.event.schedule }}" == "0 1 * * 1-5" ]]; then
+            MODE="morning"
           elif [[ "${{ github.event.schedule }}" == "25 7 * * 1-5" ]]; then
             MODE="daily"
           elif [[ "${{ github.event.schedule }}" == "30 12 * * 1-5" ]]; then
@@ -87,6 +90,7 @@ jobs:
           fi
 
           case "$MODE" in
+            morning) echo "cmd=python run.py --morning" >> "$GITHUB_OUTPUT" ;;
             monitor) echo "cmd=python run.py --monitor" >> "$GITHUB_OUTPUT" ;;
             volume) echo "cmd=python run.py --volume-monitor" >> "$GITHUB_OUTPUT" ;;
             daily) echo "cmd=python run.py" >> "$GITHUB_OUTPUT" ;;
