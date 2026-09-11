@@ -101,6 +101,10 @@ jobs:
       - name: Run stock updater
         run: ${{ steps.command.outputs.cmd }}
 
+      - name: Ensure state directory
+        if: always()
+        run: mkdir -p state
+
       - name: Save incremental monitor state
         if: always()
         uses: actions/cache/save@v4
