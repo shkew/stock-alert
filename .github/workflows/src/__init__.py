@@ -1,0 +1,1 @@
+"""Local stock intelligence collector."""
