@@ -15,7 +15,14 @@ on:
           - daily
           - monthly
   schedule:
+    # Asia/Shanghai 09:00, Monday-Friday, for concise A-share morning brief.
     - cron: "0 1 * * 1-5"
+    # Asia/Shanghai 09:45, Monday-Friday, after the open stabilizes.
+    - cron: "45 1 * * 1-5"
+    # Asia/Shanghai 10:15-11:45, Monday-Friday, intraday abnormal volume alerts only.
+    - cron: "15,45 2-3 * * 1-5"
+    # Asia/Shanghai 13:15-14:45, Monday-Friday, intraday abnormal volume alerts only.
+    - cron: "15,45 5-6 * * 1-5"
 
 permissions:
   contents: read
@@ -68,8 +75,10 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             MODE="${{ inputs.mode }}"
-          else
+          elif [[ "${{ github.event.schedule }}" == "0 1 * * 1-5" ]]; then
             MODE="morning"
+          else
+            MODE="volume"
           fi
 
           case "$MODE" in
