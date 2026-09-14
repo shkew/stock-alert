@@ -702,19 +702,33 @@ class QuickBoard:
 
 
 def _fetch_quick_ths_industry_boards() -> list[QuickBoard]:
-    df = ak.stock_board_industry_summary_ths()
+    try:
+        df = ak.stock_board_industry_summary_ths()
+        source = "ths"
+    except Exception:
+        df = ak.stock_board_industry_name_em()
+        source = "em"
     code_map = _stock_code_name_map()
     boards: list[QuickBoard] = []
     for row in _rows(df):
-        name = _first(row, ["板块"])
+        name = _first(row, ["板块", "板块名称", "名称"])
         if not name:
             continue
-        pct_change = _number(row.get("涨跌幅"))
-        amount = _number(row.get("总成交额")) * 100_000_000
-        leader_name = _first(row, ["领涨股"])
+        pct_change = _number(_first(row, ["涨跌幅", "涨跌幅%", "涨幅"]))
+        amount = _quick_board_amount(row, source)
+        leader_name = _first(row, ["领涨股", "领涨股票"])
         leader_code = code_map.get(leader_name, "")
-        leader_price = _number(row.get("领涨股-最新价"))
-        leader_pct_change = _number(row.get("领涨股-涨跌幅"))
+        leader_price = _number(_first(row, ["领涨股-最新价", "领涨股最新价"]))
+        leader_pct_change = _number(_first(row, ["领涨股-涨跌幅", "领涨股涨跌幅"]))
+        if not leader_name or not leader_code or leader_price <= 0:
+            leader_name, leader_code, leader_price, leader_pct_change = _fill_board_leader(
+                name,
+                leader_name,
+                leader_code,
+                leader_price,
+                leader_pct_change,
+                code_map,
+            )
         score = _quick_board_score(pct_change, amount)
         boards.append(
             QuickBoard(
@@ -730,6 +744,49 @@ def _fetch_quick_ths_industry_boards() -> list[QuickBoard]:
             )
         )
     return sorted([board for board in boards if board.pct_change > 0], key=lambda item: item.score, reverse=True)[:10]
+
+
+def _quick_board_amount(row: dict, source: str) -> float:
+    amount = _number(_first(row, ["成交额", "总成交额", "成交金额"]))
+    if source == "ths" and amount and amount < 100_000_000:
+        return amount * 100_000_000
+    return amount
+
+
+def _fill_board_leader(
+    board_name: str,
+    leader_name: str,
+    leader_code: str,
+    leader_price: float,
+    leader_pct_change: float,
+    code_map: dict[str, str],
+) -> tuple[str, str, float, float]:
+    if leader_name and not leader_code:
+        leader_code = code_map.get(leader_name, "")
+    if leader_name and leader_code and leader_price > 0:
+        return leader_name, leader_code, leader_price, leader_pct_change
+
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=board_name)
+    except Exception:
+        return leader_name, leader_code, leader_price, leader_pct_change
+
+    best: tuple[str, str, float, float, float] | None = None
+    for row in _rows(df):
+        name = _first(row, ["名称", "股票简称", "股票名称"])
+        code = _first(row, ["代码", "股票代码", "证券代码"])
+        pct_change = _number(_first(row, ["涨跌幅", "涨幅", "涨跌幅%"]))
+        price = _number(_first(row, ["最新价", "收盘", "价格"]))
+        amount = _number(_first(row, ["成交额", "成交金额"]))
+        if not name:
+            continue
+        score = pct_change * 10 + min(amount / 100_000_000, 30)
+        if best is None or score > best[4]:
+            best = (name, code.zfill(6) if code else code_map.get(name, ""), price, pct_change, score)
+
+    if best is None:
+        return leader_name, leader_code, leader_price, leader_pct_change
+    return best[0], best[1], best[2], best[3]
 
 
 def _quick_board_score(pct_change: float, amount: float) -> float:
