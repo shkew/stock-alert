@@ -15,8 +15,9 @@ on:
           - daily
           - monthly
   schedule:
-    # Asia/Shanghai 09:00, Monday-Friday, for concise A-share morning brief.
-    - cron: "0 1 * * 1-5"
+    # Asia/Shanghai 08:55, Monday-Friday, for concise A-share morning brief.
+    # GitHub Actions schedules can be delayed at the top of the hour, so avoid 09:00 sharp.
+    - cron: "55 0 * * 1-5"
     # Asia/Shanghai 09:45, Monday-Friday, after the open stabilizes.
     - cron: "45 1 * * 1-5"
     # Asia/Shanghai 10:15-11:45, Monday-Friday, intraday abnormal volume alerts only.
@@ -75,7 +76,7 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             MODE="${{ inputs.mode }}"
-          elif [[ "${{ github.event.schedule }}" == "0 1 * * 1-5" ]]; then
+          elif [[ "${{ github.event.schedule }}" == "55 0 * * 1-5" ]]; then
             MODE="morning"
           else
             MODE="volume"
